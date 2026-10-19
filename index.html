@@ -192,6 +192,7 @@ const DEFAULT_CATS=[
 const EXTRA_COLORS=[['#0e9f8e','#0b5f6b'],['#e0457b','#8a1c4a'],['#6b7bd6','#2f3a8f'],['#d98a2b','#8f4a10']];
 let S={name:'',places:[],cats:[],hist:[]};
 let HQ='',DEF=null;
+let SCR=[],exitArmed=false,exitT=null,leaving=false;
 let POS=null, view={n:'home'}, stack=[], listState={cat:null,q:'',near:false,favs:false};
 let draft=null;
 
@@ -250,9 +251,39 @@ function socLink(type,v){
 function resizeImg(file){return new Promise(res=>{const fr=new FileReader();fr.onload=()=>{const im=new Image();im.onload=()=>{const s=Math.min(1,1000/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.72))};im.onerror=()=>res(null);im.src=fr.result};fr.onerror=()=>res(null);fr.readAsDataURL(file)})}
 
 /* ============ NAVEGACIÓN ============ */
-function go(v){stack.push(view);view=v;render();window.scrollTo(0,0)}
-function back(){view=stack.pop()||{n:'home'};render()}
-function tab(n){stack=[];view={n};if(n==='home'){listState.q='';HQ=''}render();window.scrollTo(0,0)}
+const TABS=['home','map','favs','hist','account'];
+function go(v){stack.push(view);SCR.push(window.scrollY||0);view=v;try{history.pushState({depth:stack.length},'')}catch(e){}render();window.scrollTo(0,0)}
+function back(){if(stack.length)history.back();else tab('home')}
+function tab(n){
+  if(n==='home'){
+    HQ='';listState.q='';
+    if(stack.length>0){history.go(-stack.length)}
+    else{view={n:'home'};render();window.scrollTo(0,0)}
+    return;
+  }
+  if(view.n===n)return;
+  go({n});
+}
+window.addEventListener('popstate',e=>{
+  const s=e.state;
+  const ov=document.querySelector('.ov');
+  if(ov){ov.remove();try{history.pushState({depth:stack.length},'')}catch(_){}return}
+  if(leaving){history.back();return}
+  if(!s||s.g){
+    if(stack.length>0){view=stack[0];stack=[];SCR=[];render();window.scrollTo(0,0);try{history.pushState({depth:0},'')}catch(_){}return}
+    if(exitArmed){leaving=true;history.back();return}
+    exitArmed=true;toast('Presiona otra vez para salir');clearTimeout(exitT);exitT=setTimeout(()=>{exitArmed=false},2500);
+    try{history.pushState({depth:0},'')}catch(_){}
+    return;
+  }
+  const d=s.depth;let sy=0;
+  while(stack.length>d){view=stack.pop();sy=SCR.pop()||0}
+  if(d!==stack.length){try{history.replaceState({depth:stack.length},'')}catch(_){}}
+  render();window.scrollTo(0,sy);
+});
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'){leaving=false;exitArmed=false;try{if(history.state&&history.state.g)history.pushState({depth:stack.length},'')}catch(_){}}
+});
 function openCat(id){listState={cat:id,q:'',near:false,favs:false};go({n:'list'})}
 function openAll(){listState={cat:null,q:'',near:false,favs:false};go({n:'list'})}
 
@@ -296,7 +327,8 @@ function render(){
     case'hist':h=vHist();break;
     case'account':h=vAccount();break;
   }
-  const navOn=['home','map','favs','hist','account'].includes(view.n)?view.n:(view.n==='list'||view.n==='detail'||view.n==='form'?(stack[0]&&stack[0].n)||'home':'home');
+  let navOn='home';
+  if(TABS.includes(view.n))navOn=view.n;else{for(let i=stack.length-1;i>=0;i--){if(TABS.includes(stack[i].n)){navOn=stack[i].n;break}}}
   const nb=(k,ic,lb,fill)=>`<button class="${navOn===k?'on':''} ${fill?'fill':''}" onclick="tab('${k}')">${ic}<span>${lb}</span></button>`;
   app.innerHTML=h+`<nav>${nb('home',I.home,'Inicio',1)}${nb('map',I.map,'Mapa')}${nb('favs',I.heart,'Favoritos')}${nb('hist',I.clock,'Historial')}${nb('account',I.user,'Mi cuenta')}</nav>`;
   if(['home','list','favs'].includes(view.n))app.insertAdjacentHTML('beforeend',`<button class="fab" onclick="newPlace()" aria-label="Agregar lugar">+</button>`);
@@ -525,7 +557,7 @@ function savePlace(){
   const isNew=draft._new;delete draft._new;
   if(isNew)S.places.push(draft);else S.places=S.places.map(p=>p.id===draft.id?draft:p);
   save();toast('Lugar guardado ✅');
-  if(isNew){stack.pop();view={n:'detail',id:draft.id};render();window.scrollTo(0,0)}else back();
+  if(isNew){view={n:'detail',id:draft.id};try{history.replaceState({depth:stack.length},'')}catch(e){}render();window.scrollTo(0,0)}else back();
 }
 
 /* --- MAPA --- */
@@ -572,6 +604,7 @@ function importData(inp){const f=inp.files[0];if(!f)return;const r=new FileReade
 (async()=>{
   const d=await DB.get();if(d)S=Object.assign(S,d);
   render();
+  try{history.replaceState({g:1},'');history.pushState({depth:0},'')}catch(e){}
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
 
   if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>{POS={lat:p.coords.latitude,lng:p.coords.longitude};if(['home','list','map'].includes(view.n)&&!document.activeElement.matches('input,textarea'))render()},()=>{},{timeout:8000,maximumAge:300000});
